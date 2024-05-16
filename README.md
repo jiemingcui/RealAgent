@@ -5,7 +5,7 @@ First download Isaac Gym from the [website](https://developer.nvidia.com/isaac-g
 ```python
 conda create -n realagent python=3.7 (or 3.7+)
 conda activate realagent
-pip install -r requirments.txt
+pip install -r requirements.txt
 ```
 Then git clone the code and install the package.
 ```python
