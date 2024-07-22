@@ -38,9 +38,18 @@ def play(args):
         export_policy_as_jit(ppo_runner.alg.actor_critic, path)
         print('Exported policy as jit script to: ', path)
 
+    h1_gm = {
+        "human_agent_action": [],
+        "human_agent_torques": [],
+    }
+
     for i in range(10*int(env.max_episode_length)):
         actions = policy(obs.detach())
-        obs, _, rews, dones, infos = env.step(actions.detach())
+        h1_gm["human_agent_action"].append(actions[0, :].detach().cpu().numpy())
+        obs, _, rews, dones, infos, torque = env.step(actions.detach())
+        h1_gm["human_agent_torques"].append(torque)
+        np.save("./actions.npy", h1_gm)
+
 
 if __name__ == '__main__':
     EXPORT_POLICY = True
