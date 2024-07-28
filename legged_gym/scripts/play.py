@@ -45,9 +45,10 @@ def play(args):
 
     for i in range(10*int(env.max_episode_length)):
         actions = policy(obs.detach())
-        h1_gm["human_agent_action"].append(actions[0, :].detach().cpu().numpy())
-        obs, _, rews, dones, infos, torque = env.step(actions.detach())
-        h1_gm["human_agent_torques"].append(torque)
+        h1_gm["human_agent_action"].append(actions[0, :].detach().cpu().numpy()*0.25)
+        obs, _, rews, dones, infos = env.step(actions.detach())
+        # obs, _, rews, dones, infos, torque = env.step(actions.detach())
+        # h1_gm["human_agent_torques"].append(torque)
         np.save("./actions.npy", h1_gm)
 
 

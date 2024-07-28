@@ -84,6 +84,8 @@ class H1RoughCfg(LeggedRobotCfg):
             action_rate = -0.01
             torques = 0.0
             dof_pos_limits = -10.0
+            heading = 70
+            forward = 10
 
 
 class H1RoughCfgPPO(LeggedRobotCfgPPO):

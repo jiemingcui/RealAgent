@@ -17,6 +17,8 @@ from legged_gym.utils.math import wrap_to_pi
 from legged_gym.utils.isaacgym_utils import get_euler_xyz as get_euler_xyz_in_tensor
 from legged_gym.utils.helpers import class_to_dict
 from .legged_robot_config import LeggedRobotCfg
+from legged_gym.utils.rotation3d import quat_rotate
+from legged_gym.utils import torch_utils
 
 class LeggedRobot(BaseTask):
     def __init__(self, cfg: LeggedRobotCfg, sim_params, physics_engine, sim_device, headless):
@@ -80,7 +82,7 @@ class LeggedRobot(BaseTask):
         self.obs_buf = torch.clip(self.obs_buf, -clip_obs, clip_obs)
         if self.privileged_obs_buf is not None:
             self.privileged_obs_buf = torch.clip(self.privileged_obs_buf, -clip_obs, clip_obs)
-        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras, human_torques
+        return self.obs_buf, self.privileged_obs_buf, self.rew_buf, self.reset_buf, self.extras
 
     def post_physics_step(self):
         """ check terminations, compute observations and rewards
@@ -170,6 +172,7 @@ class LeggedRobot(BaseTask):
             rew = self.reward_functions[i]() * self.reward_scales[name]
             self.rew_buf += rew
             self.episode_sums[name] += rew
+
         if self.cfg.rewards.only_positive_rewards:
             self.rew_buf[:] = torch.clip(self.rew_buf[:], min=0.)
         # add termination reward after clipping
@@ -434,6 +437,7 @@ class LeggedRobot(BaseTask):
         self.rpy = get_euler_xyz_in_tensor(self.base_quat)
         self.base_pos = self.root_states[:self.num_envs, 0:3]
         self.contact_forces = gymtorch.wrap_tensor(net_contact_forces).view(self.num_envs, -1, 3) # shape: num_envs, num_bodies, xyz axis
+        self.forward_pre = torch.zeros(self.num_envs, device=self.device, requires_grad=False)
 
         # initialize some data used later on
         self.common_step_counter = 0
@@ -455,7 +459,8 @@ class LeggedRobot(BaseTask):
         self.base_lin_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 7:10])
         self.base_ang_vel = quat_rotate_inverse(self.base_quat, self.root_states[:, 10:13])
         self.projected_gravity = quat_rotate_inverse(self.base_quat, self.gravity_vec)
-      
+        self.target_face_theta = 0.5 * np.pi * torch.zeros(self.num_envs, device=self.device)
+        self.heading_tar = torch.stack([torch.cos(self.target_face_theta), torch.sin(self.target_face_theta)], dim=-1)
 
         # joint positions offsets and PD gains
         self.default_dof_pos = torch.zeros(self.num_dof, dtype=torch.float, device=self.device, requires_grad=False)
@@ -688,7 +693,10 @@ class LeggedRobot(BaseTask):
         # Tracking of linear velocity commands (xy axes)
         lin_vel_error = torch.sum(torch.square(self.commands[:, :2] - self.base_lin_vel[:, :2]), dim=1)
         return torch.exp(-lin_vel_error/self.cfg.rewards.tracking_sigma)
-    
+
+    # def _reward_heading(self):
+    #     return torch.exp(torch.sum(self.commands[:, 3]))
+
     def _reward_tracking_ang_vel(self):
         # Tracking of angular velocity commands (yaw) 
         ang_vel_error = torch.square(self.commands[:, 2] - self.base_ang_vel[:, 2])
@@ -719,3 +727,25 @@ class LeggedRobot(BaseTask):
     def _reward_feet_contact_forces(self):
         # penalize high contact forces
         return torch.sum((torch.norm(self.contact_forces[:, self.feet_indices, :], dim=-1) -  self.cfg.rewards.max_contact_force).clip(min=0.), dim=1)
+
+    def _reward_heading(self):
+        heading_rot = torch_utils.calc_heading_quat(self.base_quat)
+        # print("heading_rot", heading_rot[:4])
+        facing_dir = torch.zeros_like(self.base_pos)
+        facing_dir[..., 0] = 1.0
+        facing_dir = quat_rotate(heading_rot, facing_dir)
+        # print("facing_dir", facing_dir[:4])
+
+        facing_err = torch.sum(self.heading_tar * facing_dir[..., 0:2], dim=-1)
+        facing_reward = torch.clamp_min(facing_err, 0.0)
+        # print("facing_reward", facing_reward[:4])
+
+        return facing_reward
+
+    def _reward_forward(self):
+        # self.delta_forward = self.base_pos[:, 1] - self.forward_pre
+        # self.forward_pre = self.base_pos[:, 1]
+        print("base_vel", self.base_lin_vel[:, 0])
+        forward_flag = torch.where(self.base_lin_vel[:, 0] > 0.0, torch.tensor(1.0).cuda(), torch.tensor(-3.0).cuda())
+        return forward_flag.cuda()
+
